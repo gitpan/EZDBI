@@ -13,15 +13,15 @@ sub increment{ return $id++, scalar localtime; }
 
 my $DBD;
 my %DBD = (
-#!	   File  =>'File:f_dir=t/',
-	   Sprite=>'Sprite:t/02connect',
-	   SQLite=>'SQLite:dbname=t/02connect.db',
-	   WTSprite=>'WTSprite:t/02connect',      #Untested, but should work
-#!	   XBase =>'XBase:t/',
+#!	   File     =>[0, 'File:f_dir=t/'],
+	   Sprite   =>[0, 'Sprite:t/02connect'],
+	   SQLite   =>[0, 'SQLite:dbname=t/02connect.db'],
+	   WTSprite =>[0, 'WTSprite:t/02connect'],        #Untested, but should work
+	   XBase    =>[0.232, 'XBase:t/'],		  #Untested, but should work
 	  );
 foreach my $dbd ( keys %DBD ){
   eval "require DBD::$dbd";
-  unless( $@ ){
+  unless( $@ || ${'DBD::'.$dbd.'::VERSION'} < $DBD{$dbd}->[0] ){
     $DBD = $dbd;
     last;
   }
@@ -35,7 +35,7 @@ unless( $DBD ){
 print "1..31\n";
 
 
-eval { Connect $DBD{$DBD}; };
+eval { Connect $DBD{$DBD}->[1]; };
 print 'not ' if $@;
 printf "ok %2i # Connected using DBD::$DBD\n", $id++;
 

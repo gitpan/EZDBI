@@ -9,7 +9,7 @@ my $DBH;
 *E = \$DBI::errstr;
 my $sth_cache;   # string to statement handle cache
 my $sth_cacheA;  # oldest first (LRU)  handle order
-$VERSION = 0.121;
+$VERSION = 0.13;
 
 # Note that this package does NOT inherit from Exporter
 @EXPORT = qw(Connect Delete Disconnect Insert Select Sql Update Use);
@@ -41,7 +41,7 @@ sub Connect {
     @args = (
 	     $cfg->{user},
 	     $cfg->{pass},
-	     $type->{attr} ? {%$cfg->{attr}, %$type->{attr}} : %$cfg->{attr}
+	     $type->{attr} ? {%{$cfg->{attr}}, %{$type->{attr}}} : $cfg->{attr}
 	    );
     $cfg->{dsn} =~ s/^dbi://i;
     if( $cfg->{dsn} =~ /\?$/ ){
@@ -663,6 +663,8 @@ The interface may change.
  Mark Jason Dominus
  mjd-perl-ezdbi+@plover.com
  http://perl.plover.com/EZDBI/
+
+Bug reports and feature requests preferred via http://rt.cpan.org/
 
 =head2 THANKS
 
