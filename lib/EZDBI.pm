@@ -5,7 +5,7 @@ use strict;
 use Carp;
 use vars '$E', '@EXPORT', '$VERSION';
 
-$VERSION = '0.04';
+$VERSION = '0.05';
 
 # Note that this package does NOT inherit from Exporter
 @EXPORT = qw(Insert Select Update Delete DBcommand);
@@ -138,14 +138,14 @@ sub _substitute {
           $str .= "($list)";
         }
       } else {
-        $str .= "values ($list)";
+        $str .= " values ($list)";
       }
     }
   }
 
   # maybe this should be a separate function
   # otherwise, the @args are never used for anything
-  my $subct = ($str =~ /\?/g);
+  my $subct = $str =~ tr/?/?/;
   if ($subct > @args) {
     croak "Not enough arguments for $function ($subct required)";
   } elsif ($subct < @args) {
@@ -202,7 +202,7 @@ EZDBI - Easy interface to SQL database
 
 =head1 DESCRIPTION
 
-This file documents version 0.04 of C<EZDBI>.
+This file documents version 0.05 of C<EZDBI>.
 
 C<EZDBI> provides a simple and convenient interface to most common SQL
 databases.  It requires that you have installed the C<DBI> module and
@@ -422,6 +422,7 @@ Thanks to the following people for their advice, suggestions, and
 support:
 
 Terence Brannon /
+Jerrad Pierce /
 Meng Wong
 
 
