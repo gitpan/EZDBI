@@ -5,7 +5,7 @@ use strict;
 use Carp;
 use vars '$E', '@EXPORT', '$VERSION';
 
-$VERSION = '0.05';
+$VERSION = '0.06';
 
 # Note that this package does NOT inherit from Exporter
 @EXPORT = qw(Insert Select Update Delete DBcommand);
@@ -39,6 +39,10 @@ sub import {
 
 sub Connect {
   my ($type, @args) = @_;
+
+  if ($type =~ /^Pg:(.*)/ && $1 !~ /dbname=/) {
+    $type = "Pg:dbname=$1";
+  }
 
   unless ($DBH = DBI->connect("DBI:$type", @args)) {
     croak "Couldn't connect to database: $E";
@@ -133,7 +137,7 @@ sub _substitute {
   if ($function eq 'Insert') {
     my $list = join ',' , (('?') x @args);
     unless ($str =~ s/\?\?L/($list)/) {
-      if (/\bvalues\b/) {
+      if ($str =~ /\bvalues\b/i) {
         unless ($str =~ /\)\s*$/) {
           $str .= "($list)";
         }
@@ -202,7 +206,7 @@ EZDBI - Easy interface to SQL database
 
 =head1 DESCRIPTION
 
-This file documents version 0.05 of C<EZDBI>.
+This file documents version 0.06 of C<EZDBI>.
 
 C<EZDBI> provides a simple and convenient interface to most common SQL
 databases.  It requires that you have installed the C<DBI> module and
@@ -229,7 +233,12 @@ different.  Typically, you supply a username and a password here if
 the database requires them.  Consult the documentation for the
 C<DBD::> module for your database for more information.
 
+	# For MySQL
 	use EZDBI 'mysql:databasename', 'username', 'password';
+
+	# For Postgres
+	use EZDBI 'Pg:databasename', 'username', 'password';
+
 	# Please send me sample calls for other databases
 
 The normal use of C<use> creates a connection to the database
