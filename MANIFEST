@@ -1,0 +1,4 @@
+MANIFEST
+Makefile.PL
+COPYING
+lib/EZDBI.pm
