@@ -5,7 +5,7 @@ use strict;
 use Carp;
 use vars '$E', '@EXPORT', '$VERSION';
 
-$VERSION = '0.01';
+$VERSION = '0.02';
 
 # Note that this package does NOT inherit from Exporter
 @EXPORT = qw(Dbclose Dbopen Insert Select Update Delete Dbcommand);

@@ -7,4 +7,5 @@ WriteMakefile(
     AUTHOR       => 'Mark Jason Dominus (mjd-perl-ezdbi+@plover.com)',
     ABSTRACT     => 'Easy interface to SQL databases',
     PREREQ_PM    => {DBI => 0},
+          PM     => {'lib/EZDBI.pm' => '$(INST_LIBDIR)/EZDBI.pm'},
 );

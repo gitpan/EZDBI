@@ -2,3 +2,4 @@ MANIFEST
 Makefile.PL
 COPYING
 lib/EZDBI.pm
+sample.pl
