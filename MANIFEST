@@ -4,3 +4,4 @@ COPYING
 README
 lib/EZDBI.pm
 sample.pl
+t/01basic.t

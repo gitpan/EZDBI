@@ -5,7 +5,7 @@ use strict;
 use Carp;
 use vars '$E', '@EXPORT', '$VERSION';
 
-$VERSION = '0.03';
+$VERSION = '0.04';
 
 # Note that this package does NOT inherit from Exporter
 @EXPORT = qw(Insert Select Update Delete DBcommand);
@@ -39,10 +39,6 @@ sub import {
 
 sub Connect {
   my ($type, @args) = @_;
-
-  unless (defined $type) {
-    croak "Usage: use $package DATABASE => arguments...";
-  }
 
   unless ($DBH = DBI->connect("DBI:$type", @args)) {
     croak "Couldn't connect to database: $E";
@@ -122,7 +118,7 @@ sub Select {
 # DBcommand "grant blah where blah blah blah";
 sub DBcommand {
   my $caller = caller;
-  unless ($DBH{$caller}->do(@_)) {
+  unless ($DBH->do(@_)) {
     croak "failed: $E";
   }
 }
@@ -206,7 +202,7 @@ EZDBI - Easy interface to SQL database
 
 =head1 DESCRIPTION
 
-This file documents version 0.03 of C<EZDBI>.
+This file documents version 0.04 of C<EZDBI>.
 
 C<EZDBI> provides a simple and convenient interface to most common SQL
 databases.  It requires that you have installed the C<DBI> module and
