@@ -5,10 +5,10 @@ use strict;
 use Carp;
 use vars '$E', '@EXPORT', '$VERSION';
 
-$VERSION = '0.02';
+$VERSION = '0.03';
 
 # Note that this package does NOT inherit from Exporter
-@EXPORT = qw(Dbclose Dbopen Insert Select Update Delete Dbcommand);
+@EXPORT = qw(Insert Select Update Delete DBcommand);
 
 # select '* from TABLE WHERE...'
 #   returns array of rows in list context
@@ -24,6 +24,22 @@ my $MAX_STH = 10;
 sub import {
   my ($package, $type, @args) = @_;
 
+  my $caller = caller;
+  if (defined $type) {
+    Connect($type, @args) ;
+  } else {
+    push @EXPORT, 'Connect';
+  }
+
+  for my $func (@EXPORT) {
+    no strict 'refs';
+    *{"$caller\::$func"} = \&$func;
+  }
+}
+
+sub Connect {
+  my ($type, @args) = @_;
+
   unless (defined $type) {
     croak "Usage: use $package DATABASE => arguments...";
   }
@@ -31,15 +47,10 @@ sub import {
   unless ($DBH = DBI->connect("DBI:$type", @args)) {
     croak "Couldn't connect to database: $E";
   }
-
-  my $caller = caller;
-  for my $func (@EXPORT) {
-    no strict 'refs';
-    *{"$caller\::$func"} = \&$func;
-  }
 }
 
-# Update "set a=%d, b=%s where ...", ...;
+
+# Update "set a=?, b=? where ...", ...;
 sub Update {
   my ($str, @args) = @_;
   my $sth = _substitute('Update', $str, @args);
@@ -67,7 +78,7 @@ sub Delete {
   my $sth = _substitute('Delete', $str, @args);
   my $rc;
   unless ($rc = $sth->execute(@args)) {
-    croak "insert failed: $E";
+    croak "delete failed: $E";
   }
   $sth->finish();
   $rc;
@@ -77,7 +88,7 @@ sub Delete {
 #       SelectOne, SelectOneHash
 sub Select {
   my ($str, @args) = @_;
-  my ($columns) = ($str =~ /^\s*(.*\S+)\s+from\s+/);
+  my ($columns) = ($str =~ /^\s*(.*\S+)\s+from\s+/i);
 
   unless (defined wantarray) {
     croak "Select in void context";
@@ -92,7 +103,7 @@ sub Select {
   my @r;
   my $sth = _substitute('Select', $str, @args);
   unless ($sth->execute(@args)) {
-    croak "insert failed: $E";
+    croak "select failed: $E";
   }
 
   while (my $row = $sth->fetchrow_arrayref) {
@@ -110,7 +121,8 @@ sub Select {
 
 # DBcommand "grant blah where blah blah blah";
 sub DBcommand {
-  unless ($DBH->do(@_)) {
+  my $caller = caller;
+  unless ($DBH{$caller}->do(@_)) {
     croak "failed: $E";
   }
 }
@@ -123,18 +135,21 @@ sub _substitute {
   my ($function, $str, @args) = @_;
 
   if ($function eq 'Insert') {
-    my $list = join ',' , (('%s') x @args);
-    unless ($str =~ s/%L/($list)/) {
-      unless ($str =~ /\)\s*$/) {
-        $str .= ' values ' unless $str =~ /values\s*$/;
-        $str .= "($list)";
+    my $list = join ',' , (('?') x @args);
+    unless ($str =~ s/\?\?L/($list)/) {
+      if (/\bvalues\b/) {
+        unless ($str =~ /\)\s*$/) {
+          $str .= "($list)";
+        }
+      } else {
+        $str .= "values ($list)";
       }
     }
   }
 
   # maybe this should be a separate function
   # otherwise, the @args are never used for anything
-  my $subct = ($str =~ s/%[ds]/?/g);
+  my $subct = ($str =~ /\?/g);
   if ($subct > @args) {
     croak "Not enough arguments for $function ($subct required)";
   } elsif ($subct < @args) {
@@ -148,16 +163,6 @@ sub _substitute {
     my @a;
     local $_;
 
-    # locate it and move it to the front of the MRU queue
-    while (@sth_cache) {
-      $_ = shift @sth_cache;
-      if ($_ eq $str) {
-        push @a, @sth_cache;
-        @sth_cache = ();
-      }
-      push @a, $_;
-    }
-    @sth_cache = @a;
   } else {                      # new query
     # expire old cache item if cache is full
     while (@sth_cache >= $MAX_STH) {
@@ -173,8 +178,11 @@ sub _substitute {
 
     # install new handle in cache
     $sth_cache{$str} = $sth;
-    push @sth_cache, $str;
   }
+
+  # remove it from the MRU queue (if it is there)
+  # and add it to the end
+  @sth_cache = ((grep {$_ ne $str} @sth_cache), $str);
 
   return $sth;
 }
@@ -190,15 +198,15 @@ EZDBI - Easy interface to SQL database
   use EZDBI 'type:database', @arguments;
 
   Insert 'into TABLE values', ...;
-  Delete 'from TABLE where field=%s, field=%d', ...;
-  Update 'TABLE set field=%s, field=%d', ...;
+  Delete 'from TABLE where field=?, field=?', ...;
+  Update 'TABLE set field=?, field=?', ...;
 
-  @rows   = Select 'field, field from TABLE where field=%s, field=%d', ...;
-  $n_rows = Select 'field, field from TABLE where field=%s, field=%d', ...;
+  @rows   = Select 'field, field from TABLE where field=?, field=?', ...;
+  $n_rows = Select 'field, field from TABLE where field=?, field=?', ...;
 
 =head1 DESCRIPTION
 
-This file documents version 0.01 of C<EZDBI>.
+This file documents version 0.03 of C<EZDBI>.
 
 C<EZDBI> provides a simple and convenient interface to most common SQL
 databases.  It requires that you have installed the C<DBI> module and
@@ -227,6 +235,19 @@ C<DBD::> module for your database for more information.
 
 	use EZDBI 'mysql:databasename', 'username', 'password';
 	# Please send me sample calls for other databases
+
+The normal use of C<use> creates a connection to the database
+immediately, even before the rest of your program is compiled, and
+aborts the compilation unless the attempt to connect to the database
+is successful.  Sometimes it may be more convenient to defer the
+connection attempt until later, after part of your program has run.
+To do that, use:
+
+	use EZDBI;
+
+and later, when your program is ready to connect, call
+
+	Connect 'type:database', ...;
 
 =head2 C<Select>
 
@@ -274,28 +295,28 @@ Sometimes people go to a lot of work to try to fix this.  C<EZDBI>
 will fix it for you automatically.  Instead of the code above, you
 should use this:
 
-          for (Select "firstname from accounts where lastname=%s", $lastname) {
+          for (Select "firstname from accounts where lastname=?", $lastname) {
             print "$_ $lastname\n";
           }
 
-C<EZDBI> will replace the C<%s> with the value of C<$lastname>.  If
+C<EZDBI> will replace the C<?> with the value of C<$lastname>.  If
 C<$lastname> contains an apostrophe or something else that would mess
-up the SQL, C<EZDBI> will take care of it for you.  Use C<%s> wherever
-you want to insert a string, and C<%d> wherever you want to insert a
-number.  Doing this may also be much more efficient than inserting the
-variables into the SQL yourself.
+up the SQL, C<EZDBI> will take care of it for you.  Use C<?> wherever
+you want to insert a value.  Doing this may also be much more
+efficient than inserting the variables into the SQL yourself.
 
+The C<?>es in the SQL code are called I<placeholders>.
 The Perl value C<undef> is converted to the SQL C<NULL> value by
 placeholders:
 
-        for (Select "* from accounts where occupation=%s", undef) {
-          # selects records where occupation is NULL       
+        for (Select "* from accounts where occupation=?", undef) {
+          # selects records where occupation is NULL
         }
 
 You can, of course, use
 
         for (Select "* from accounts where occupation is NULL") {
-          # selects records where occupation is NULL       
+          # selects records where occupation is NULL
         }
 
 In scalar context, C<Select> returns the number of rows selected.
@@ -307,7 +328,7 @@ This means you can say
           print "Nobody is overdrawn.\n";
         }
 
-In list context, X<Select> returns a list of selected records.  If the
+In list context, C<Select> returns a list of selected records.  If the
 selection includes only one field, you will get back a list of field
 values:
 
@@ -336,49 +357,55 @@ list of rows; each row will be an array of values:
         #                  [119, "Tim", "O'Reilly", 48, "Publishing Magnate",
         #                    -550.00], ...)
 
-=head2 Delete
+=head2 C<Delete>
 
 C<Delete> removes records from the database.
 
-        Delete "from accounts where id=%d", $old_customer_id;
+        Delete "from accounts where id=?", $old_customer_id;
 
-You can (and should) use the C<%s> and C<%d> placeholders with
-C<Delete> when they are approprite.
+You can (and should) use C<?> placeholders with C<Delete> when they
+are approprite.
 
 In a numeric context, C<Delete> returns the number of records
 deleted.  In boolean context, C<Delete> returns a success or failure
 code.  Deleting zero records is considered to be success.
 
-=head2 Update
+=head2 C<Update>
 
 C<Update> modifies records that are already in the database.
 
-        Update "accounts set balance=balance+%d where id=%d", 
+        Update "accounts set balance=balance+? where id=?", 
                   $deposit, $old_customer_id;
 
 
 The return value is the same as for C<Delete>.
 
-=head2 Insert
+=head2 C<Insert>
 
 C<Insert> inserts new records into the database.
 
-        Insert "into accounts values (%d, %s, %s, %d, %s, %d)", 
+        Insert "into accounts values (?, ?, ?, ?, ?, ?)", 
                   undef, "Michael", "Schwern",  26, "Slacker", 0.00;
 
-Writing so many C<%s> and C<%d>'s is inconvenient.  For C<Insert>, you
-may use C<%L> as an abbreviation for the appropriate list of placeholders:
+Writing so many C<?>'s is inconvenient.  For C<Insert>, you may use
+C<??L> as an abbreviation for the appropriate list of placeholders:
 
-        Insert "into accounts values %L",
+        Insert "into accounts values ??L",
                   undef, "Michael", "Schwern",  26, "Slacker", 0.00;
 
-If the C<%L> is the last thing in the SQL statement, you may omit it.
+If the C<??L> is the last thing in the SQL statement, you may omit it.
 You may also omit the word C<'values'>:
 
         Insert "into accounts",
                   undef, "Michael", "Schwern",  26, "Slacker", 0.00;
 
 The return value is the same as for C<Delete>.
+
+=head2 Error Handling
+
+If there's an error, C<EZDBI> prints a (hopefully explanatory) message
+and throws an exception.  You can catch the exception with C<eval { ... }>  or let it kill your program.
+
 
 =head2 Other Features
 
@@ -390,18 +417,29 @@ and unsupported and may go away in a future release.
 This is ALPHA software.  There may be bugs.  The interface may change.
 Do not use this for anything important.
 
+Notice that this module has NO TEST SUITE.
+What does that mean to you?
+
+=head1 THANKS
+
+Thanks to the following people for their advice, suggestions, and
+support:
+
+Terence Brannon /
+Meng Wong
+
+
 =head1 SUPPORT
 
 Send mail to C<mjd-perl-ezdbi+@plover.com> and I will do what I can.
 
 =head1 AUTHOR
 
-	A. U. Thor
-	a.u.thor@a.galaxy.far.far.away
-	http://a.galaxy.far.far.away/modules
+	Mark Jason Dominus
+	mjd-perl-ezdbi+@plover.com
+	http://perl.plover.com/EZDBI/
 
 =head1 COPYRIGHT
-
 
     EZDBI - Easy Perl interface to SQL databases
     Copyright (C) 2001  Mark Jason Dominus

@@ -1,5 +1,6 @@
 MANIFEST
 Makefile.PL
 COPYING
+README
 lib/EZDBI.pm
 sample.pl

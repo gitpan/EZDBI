@@ -10,7 +10,7 @@ if (Select q{* from names where first = 'Harry'} ) {
 
 for (Select 'last from names') {
   next if $seen{$_}++;
-  my @first = Select 'first from names where last = %s', $_;
+  my @first = Select 'first from names where last = ?', $_;
   print "$_: @first\n";
 }
 
