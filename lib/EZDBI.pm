@@ -9,7 +9,7 @@ my $DBH;
 *E = \$DBI::errstr;
 my $sth_cache;   # string to statement handle cache
 my $sth_cacheA;  # oldest first (LRU)  handle order
-$VERSION = '0.1';
+$VERSION = '0.111';
 
 # Note that this package does NOT inherit from Exporter
 @EXPORT = qw(Connect Delete Disconnect Insert Select Sql Update Use);
@@ -272,7 +272,7 @@ EZDBI - EZ (Easy) interface to SQL databases (DBI)
 
 =head1 DESCRIPTION
 
-This file documents version 0.1 of B<EZDBI>.
+This file documents version 0.111 of B<EZDBI>.
 
 B<EZDBI> provides a simple and convenient interface to most common SQL
 databases.  It requires that you have installed the B<DBI> module and
