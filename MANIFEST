@@ -1,7 +1,9 @@
+CHANGES
+COPYING
 MANIFEST
 Makefile.PL
-COPYING
 README
 lib/EZDBI.pm
 sample.pl
 t/01basic.t
+t/02connect.t

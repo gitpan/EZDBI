@@ -1,3 +1,25 @@
+0.1	Thu May  2 02:32:38 UTC 2002
+
+	Renamed and documented the previously undocumented DBCommand.
+	It is now Sql, it may be used for executing arbitrary SQL.
+
+	Changed Select behavior in scalar context. It no longer returns
+	the number of rows, use SQL Count() for that. Select in scalar
+	context can now be used to retrieve arrayrefs or hashrefs one
+	row at a time, consult the man page for details.
+
+	Removed the auto-Connect form of use-ing the module.
+
+	Exposed the query cache system, the max number of queries to cache
+	(per database handle) is settable by use EZDBI maxQuery=>8.
+
+	Added Use, to allow management of multiple database handles.
+
+	Added Disconnect, to destroy a database handle. Otherwise
+	the connection persists until the program exits.
+
+	Some documentation cleanup and restructuring.
+
 0.071	Tue Apr 23 19:51:52 UTC 2002
 
 	Corrected failed test (prior version is fine, just ignore the error)
@@ -8,3 +30,35 @@
         mode i.e. you can store connection information in an AppConfig file.
 
         Some documentation cleanup and restructuring.
+
+0.06	Thu Nov 01 14:21        2001
+
+	Minor maintenance release
+
+	Small bug fixes
+
+	Slightly better support for Postgres
+
+0.05	
+
+	Minor bug and doc fixes
+
+	Trivial test suite
+
+
+0.03	
+
+	Minor bug and doc fixes
+
+	"INSERT INTO t (field1, ...)" syntax now supported
+
+	Support for %d and %s escapes withdrawn.  Use ? instead.
+
+	'%L' escape replaced with '??L'.
+
+	Support for deferring connection to run time,
+	including 'Connect' function
+
+0.02	
+
+	This was the initial release

@@ -1,10 +1,18 @@
 
+----------------------------------------------------------------------
+
+This is ALPHA software.  There may be bugs.  The interface may change.
+
+----------------------------------------------------------------------
+
 EZDBI provides an easy, simple interface to SQL databases from
 Perl.   Here's an example program written with EZDBI:
 
         #!/usr/bin/perl
 
-        use EZDBI 'mysql:test' => 'user', 'password';
+        use EZDBI;
+
+	Connect 'mysql:test' => 'user', 'password';
 
         Insert 'into names values', 'Harry', 'Potter';
 
@@ -25,44 +33,7 @@ Perl.   Here's an example program written with EZDBI:
         }
 
 
-Complex queries are possible, but you don't have to manage the DBI
-objects yourself.  Everything is done behind the scenes.  All you do
+You are not required to manage the DBI objects yourself, everything
+is done behind the scenes. Complex queries are possible. All you do
 is call the functions.  If you're retrieving data, it comes back as
 simple arrays.
-
-----------------------------------------------------------------
-
-                               WARNING
-
-This is ALPHA software.  There may be bugs.  The interface may change.
-Do not use this for anything important.
-
-----------------------------------------------------------------
-
-What's new in version 0.05:  
-
-* Minor bug and doc fixes
-
-* Trivial test suite
-
-----------------------------------------------------------------
-
-What's new in version 0.03:  
-
-* Minor bug and doc fixes
-
-* "INSERT INTO t (field1, ...)" syntax now supported
-
-* Support for %d and %s escapes withdrawn.  Use ? instead.
-
-* '%L' escape replaced with '??L'.
-
-* Support for deferring connection to run time, including 'Connect' function
-
-----------------------------------------------------------------
-
-What's new in version 0.02:  
-
-* This was the initial release
-
-

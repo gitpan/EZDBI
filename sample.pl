@@ -1,22 +1,24 @@
 #!/usr/bin/perl
 
-use EZDBI 'mysql:test' => 'username', 'password';
+use EZDBI;
 
-Insert 'into names values', 'Harry', 'Potter';
+Connect 'mysql:test' => 'username', 'password';
 
-if (Select q{* from names where first = 'Harry'} ) {
+Insert 'Into NAMES Values', 'Harry', 'Potter';
+
+if( (Select q{Count(*) From NAMES Where first = 'Harry'})[0] ) {
   print "Potter is IN THE HOUSE.\n";
 }
 
 for (Select 'last from names') {
   next if $seen{$_}++;
-  my @first = Select 'first from names where last = ?', $_;
+  my @first = Select 'first From NAMES Where last = ?', $_;
   print "$_: @first\n";
 }
 
-Delete q{from names where last='Potter'};
+Delete q{From NAMES Where last='Potter'};
 
-if (Select q{* from names where first = 'Potter'} ) {
+if( (Select q{Count(*) From NAMES Where first = 'Harry'})[0] ) {
   die "Can't get rid of that damn Harry Potter!";
 }
 
