@@ -1,96 +1,101 @@
 use EZDBI;
-
-
-print STDERR q(
-
-    ************************************************************
-    This test is optional and requires a functional DBI setup
-    You will need a username, password, and databasename on hand
-    ************************************************************
-
-    Do you wish to proceed? [yN] );
-chomp(my $response = lc(<>));
-print "1..3\n";
-unless( grep { $response eq $_ } ('1', 'y', 'yes') ){
-  print "ok $_ # Skip opt-out\n" for 1 .. 3;
-  goto END;
+BEGIN{
+  unlink('t/test.stb');
+  unlink('t/02connect.db');
+  unlink('t/TEST.dbf');
 }
 
 
-eval{
-  use POSIX qw(:termios_h);
-  my ($term, $oterm, $echo, $noecho, $fd_stdin);
-  
-  $fd_stdin = fileno(STDIN);
-  $term     = POSIX::Termios->new();
-  $term->getattr($fd_stdin);
-  $oterm     = $term->getlflag();
-  $echo     = ECHO | ECHOK | ICANON;
-  $noecho   = $oterm & ~$echo;
-  
-  sub cbreak {
-    $term->setlflag($noecho);
-    $term->setcc(VTIME, 1);
-    $term->setattr($fd_stdin, TCSANOW);
-  }
-  sub cooked {
-    $term->setlflag($oterm);
-    $term->setcc(VTIME, 0);
-    $term->setattr($fd_stdin, TCSANOW);
-  }
-  sub getone {
-    my $key = '';
-    cbreak();
-    sysread(STDIN, $key, 1);
-    cooked();
-    return $key;
-  }
-} or my $ECHO = 'on';
+my $id=1;
+local $" = ', ';
+sub increment{ return $id++, scalar localtime; }
 
 
-my($pass, $dbh);
-print STDERR "    Enter a DSN e.g. mysql:database1: ";   chomp(my $dsn =  <>);
-print STDERR "    Enter a table within this database: "; chomp(my $table= <>);
-print STDERR "    Enter a valid username with access: "; chomp(my $user = <>);
-until( $dbh ){
-  printf STDERR "    Enter the user's password (echo is %s): ", $ECHO || 'off';
-  if( $ECHO ){
-    chomp($pass =  <>);
+my $DBD;
+my %DBD = (
+#!	   File  =>'File:f_dir=t/',
+	   Sprite=>'Sprite:t/02connect',
+	   SQLite=>'SQLite:dbname=t/02connect.db',
+	   WTSprite=>'WTSprite:t/02connect',      #Untested, but should work
+#!	   XBase =>'XBase:t/',
+	  );
+foreach my $dbd ( keys %DBD ){
+  eval "require DBD::$dbd";
+  unless( $@ ){
+    $DBD = $dbd;
+    last;
+  }
+}
+unless( $DBD ){
+  print "1..0 #Skipped: None of @{[sort keys %DBD]}\n";
+  exit 0;
+}
+
+
+print "1..31\n";
+
+
+eval { Connect $DBD{$DBD}; };
+print 'not ' if $@;
+printf "ok %2i # Connected using DBD::$DBD\n", $id++;
+
+
+eval { Sql 'Create Table TEST (id INTEGER, sql CHAR(42), time CHAR(24))'; };
+print 'not ' if $@;
+printf "ok %2i # Create Table TEST (id INTEGER, sql CHAR(42), time CHAR(24))\n", $id++;
+
+
+#Check Insert, hashref style and reworked ??L code
+{
+  my $where = 'Into TEST';
+  my @r = increment();
+  eval{ Insert $where, {id=>$r[0], sql=>$where, time=>$r[1]};};
+  print 'not ' if $@;
+  printf "ok %2i # Insert a la hashref\n", $r[0];
+  foreach my $sql ($where, "$where (id, sql, time)" ){
+    foreach my $opts(
+		     [$sql,                   increment()],
+		     ["$sql Values",          increment()],
+		     ["$sql Values ??L",      increment()],
+		     ["$sql Values(??L)",     increment()],
+		     ["$sql Values(?, ?, ?)", increment()]
+		    ){
+      eval {Insert @{$opts}[0,1,0,2];};
+      print 'not ' if $@;
+      printf "ok %2i # Insert $opts->[0]\n", $opts->[1];
+    }
+    @r = increment();
+    eval{Insert "$sql Values('$r[0]', '$sql Values(INLINE)', '$r[1]')";};
+    print 'not ' if $@;
+    printf "ok %2i # Insert $sql Values(INLINE)\n", $r[0];
+  }
+}
+
+
+{
+  my @F = eval{Select '* From TEST'};
+  print 'not ' if $@;
+  printf "ok %i # Select *\n", $id++;
+  if( $@ ){
+    printf("ok %i # Skipped\n", $id++) for 17..29;
   }
   else{
-    my $got = '';
-    until( $got eq $/ ){
-      $pass .= $got;
-      $got   = getone();
-    }
-    cooked();
-  }
-  unless( $dbh = eval { Connect($dsn, $user, $pass) } ){
-    print STDERR q(
-    The password may have been mistyped, try again? [Yn] );
-    chomp(my $response = lc(<>));
-    if( grep { $response eq $_ } ('0', 'n', 'no') ){
-      print "not ok 1\n";
-      print "ok $_ # Skip\n" for 2 .. 3;
-      goto END;
+    foreach ( @F ){
+      printf "ok %i # [@{[map{qq('$_')} @$_]}]\n", $id++;
     }
   }
 }
-print "ok 1\n";
 
 
-eval {
-  my $s = Select("COUNT(*) FROM $table");
-  print "ok 2\n";
-  printf STDERR qq(
-    There appear to be %i rows in $dsn:$table.
-    Is this reasonable/correct? [yN] ),
-      $s->([])->[0];
-  chomp(my $response = lc(<>));
-  print 'not ' unless grep { $response eq $_ } ('1', 'y', 'yes');
-  
-} or print 'not ';
-print "ok 3\n";
-print STDERR "\n";
-END:
-1;
+#Check Update hashref style
+eval{ Update 'TEST', {time=>0}; };
+print 'not ' if $@;
+printf "ok %i # Update a la hashref\n", $id++;
+
+
+#XXX Select and check for non 0 times
+
+
+eval {Sql 'Drop Table TEST'; };
+print 'not ' if $@;
+printf "ok %i # Drop Table TEST\n", $id++;

@@ -3,7 +3,10 @@ COPYING
 MANIFEST
 Makefile.PL
 README
+TODO
 lib/EZDBI.pm
 sample.pl
 t/01basic.t
 t/02connect.t
+t/02connect.sdb
+t/03connect.t

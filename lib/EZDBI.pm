@@ -9,13 +9,13 @@ my $DBH;
 *E = \$DBI::errstr;
 my $sth_cache;   # string to statement handle cache
 my $sth_cacheA;  # oldest first (LRU)  handle order
-$VERSION = '0.111';
+$VERSION = 0.120;
 
 # Note that this package does NOT inherit from Exporter
 @EXPORT = qw(Connect Delete Disconnect Insert Select Sql Update Use);
 sub import {
   no strict 'refs';
-  my ($package, $type, %parms) = @_;
+  my ($package, %parms) = @_;
   my $caller = caller;
 
   #This is per database handle
@@ -63,7 +63,7 @@ sub Connect {
 
 sub Delete {
   my ($str, @args) = @_;
-  my $sth = _substitute('Delete', $str, @args);
+  my $sth = _substitute('Delete', $str, scalar @args);
   my $rc;
   unless ($rc = $sth->execute(@args)) {
     croak "Delete failed: $E";
@@ -83,7 +83,16 @@ sub Disconnect {
 
 sub Insert {
   my ($str, @args) = @_;
-  my $sth = _substitute('Insert', $str, @args);
+
+  if( ref($args[0]) eq 'HASH' ){
+    my %hash = %{shift @args};
+    my @cols = sort keys %hash;
+    $str .= sprintf('(%s) Values(??L) %s',
+		    join(', ', @cols), defined($args[1]) ? $args[1] : '');
+    @args = @hash{@cols};
+  }
+
+  my $sth = _substitute('Insert', $str, scalar @args);
   my $rc;
   unless ($rc = $sth->execute(@args)) {
     croak "Insert failed: $E";
@@ -103,7 +112,7 @@ sub Select {
 
   croak "Select in void context" unless defined wantarray;
 
-  my $sth = _substitute('Select', $str, @args);
+  my $sth = _substitute('Select', $str, scalar @args);
   unless ($sth->execute(@args)) {
     croak "Select failed: $E";
   }
@@ -131,7 +140,7 @@ sub Select {
       return 0;
     }
   };
-  #XXX This object cannot be inherited...
+  #XXX This object cannot be inherited
   bless $r, 'EZDBI::Select';
 }
 sub EZDBI::Select::DESTROY{
@@ -149,7 +158,19 @@ sub Sql {
 
 sub Update {
   my ($str, @args) = @_;
-  my $sth = _substitute('Update', $str, @args);
+
+  if( ref($args[0]) eq 'HASH' ){
+    my %hash = %{shift @args};
+    my @cols = sort keys %hash;
+    unless($str =~ /\bset\b\s*$/i){
+      $str .= ' Set'
+    }
+    $str .= ' ' . join(', ', map{"$_=?"}@cols) .
+      (defined($args[1]) ? shift @args : '');
+    @args = @hash{@cols}, @args;
+  }
+
+  my $sth = _substitute('Update', $str, scalar @args);
   my $rc;
   unless ($rc = $sth->execute(@args)) {
     croak "Update failed: $E";
@@ -180,10 +201,7 @@ sub _parseIni{
   foreach my $key ( grep {/^attr/} keys %{$self} ){
     my $attr = $key;
     $attr =~ s/^attr\s+//i;
-    #XXX Unfortunately delete does not reliably return the value?
-    #XXX $self->{attr}->{$attr} = delete($self->{$key});
-    $self->{attr}->{$attr} = $self->{$key};
-    delete($self->{$key});
+    $self->{attr}->{$attr} = delete($self->{$key});
   }
 
   croak("Section [$parm{'-label'}] does not exist in $parm{'-file'}") unless
@@ -194,55 +212,47 @@ sub _parseIni{
 # given a query string,
 sub _substitute {
   defined($DBH) || croak "Not connected to a database";
-  my ($function, $str, @args) = @_;
+  my($function, $str, $args) = @_;
 
-  if ($function eq 'Insert') {
-    my $list = join ',' , (('?') x @args);
-    unless ($str =~ s/\?\?L/($list)/) {
-      if ($str =~ /\bvalues\b/i) {
-        unless ($str =~ /\)\s*$/) {
-          $str .= "($list)";
-        }
-      } elsif(@args){
-        $str .= " values ($list)";
-      }
+  if( $function eq 'Insert' ){
+    if( $str =~ s/\bValues\b\s*(?:\?\?L|\(\s*\?\?L\s*\))?\s*$//i ||
+	$str !~  /\bValues\b/i
+      ){
+      my $list = join(',', (('?') x $args));
+      $str .= " Values($list)";
     }
   }
 
-  # maybe this should be a separate function
-  # otherwise, the @args are never used for anything
   my $subct = $str =~ tr/?/?/;
-  if ($subct > @args) {
+  if( $subct > $args ){
     croak "Not enough arguments for $function ($subct required)";
-  } elsif ($subct < @args) {
+  }
+  elsif( $subct < $args ){
     croak "Too many arguments for $function ($subct required)";
   }
 
   my $sth;
   # was the statement handle cached already?
-  unless( $sth = $sth_cache->{$DBH}->{$str} ){
-  #XXX should this be more rigorous? kill 1/3 at a stroke a` la FileCache?
-    # expire old cache item if cache is full
-    while (@{$sth_cacheA->{$DBH}} >= $MAX_STH) {
-      my $q = shift @{$sth_cacheA->{$DBH}};
-      delete $sth_cache->{$DBH}->{$q};  # should cause garbage collection
+  if( $sth = $sth_cache->{$DBH}->{$str} ){
+    # remove it from the MRU queue (if it is there) and add it to the end
+    unless( $sth_cacheA->{$DBH}->[-1] eq $str ){
+      $sth_cacheA->{$DBH} = [grep($_ ne $str, @{$sth_cacheA->{$DBH}}), $str];
     }
-
+  }
+  else{
+    # expire old cache items if cache is full
+    if( scalar @{$sth_cacheA->{$DBH}} >= $MAX_STH -1 ){
+      delete(@{$sth_cache->{$DBH}}{splice(@{$sth_cacheA->{$DBH}},0,$MAX_STH/3)});
+    }
+    
     # prepare new handle
-    #XXX Why the casing?
-    $sth = $DBH->prepare("\L$function\E $str");
-    unless ($sth) {
-      croak "Couldn't prepare query from '$str': $E; aborting";
-    }
-
+    $sth = $DBH->prepare("$function $str");
+    croak "Couldn't prepare query for '$function $str': $E; aborting" unless $sth;
+    
     # install new handle in cache
     $sth_cache->{$DBH}->{$str} = $sth;
+    push(@{$sth_cacheA->{$DBH}}, $str);
   }
-
-  # remove it from the MRU queue (if it is there)
-  # and add it to the end
-  $sth_cacheA->{$DBH} = [grep($_ ne $str, @{$sth_cacheA->{$DBH}}), $str];
-
   return $sth;
 }
 
@@ -259,69 +269,75 @@ EZDBI - EZ (Easy) interface to SQL databases (DBI)
 
   use EZDBI;
 
-  Connect   'type:database', 'username', 'password', ...;
-  #OR
   Connect   {label=>'section', ...};
+  Connect   'type:database', 'username', 'password', ...;
+
+  Delete    'From TABLE Where field=?, field=?', ...;
 
   Insert    'Into TABLE Values', ...;
-  Delete    'From TABLE Where field=?, field=?', ...;
-  Update    'TABLE set field=?, field=?', ...;
+  Insert    'Into TABLE', \%values;
 
   @rows   =  Select 'field, field From TABLE Where field=?, ...;
-  $n_rows = (Select 'Count(*) From TABLE Where field=?,     ...)[0];
+  $n_rows = (Select 'Count(*)     From TABLE Where field=?, ...)[0];
+
+  Update    'TABLE Set field=?, field=?', ...;
+  Update    'TABLE Set', \%values, ...;
 
 =head1 DESCRIPTION
 
-This file documents version 0.111 of B<EZDBI>.
+This file documents version 0.120 of B<EZDBI>. It assumes that you already
+know the basics of SQL. It is not a(n) SQL tutorial.
 
 B<EZDBI> provides a simple and convenient interface to most common SQL
-databases.  It requires that you have installed the B<DBI> module and
-the B<DBD> module for whatever database you will be using.
+databases. It requires that you have installed the B<DBI> module and
+the database driver (B<DBD> module) for whatever database you will be using.
 
-This documentation assumes that you already know the basics of SQL.
-It is not an SQL tutorial.
+All of the EZDBI commands support I<placeholders> (C<?>), assuming the
+B<DBD> you are using does as well. You should always use placeholders where
+possible as they increase performance and prevent some potential mishaps.
+For example, the following code would fail due to an imbalanced number of
+single quotes if C<$name=q(O'Reilly)>.
+
+  Select "firstname From ACCOUNTS Where lastname='$lastname'"
+
+Instead do
+
+  Select "firstname From ACCOUNTS Where lastname='?'", $lastname
+
+Also note that the Perl value C<undef> is converted to the SQL C<NULL>
+value by placeholders:
+
+  Select "* From ACCOUNTS Where occupation=?", undef
+  # selects records where occupation is NULL
 
 =head2 C<Connect>
 
-There are two means of connecting to a database with B<EZDBI>.
-To use the first you put the following line in your program:
+Creates a connection to the database. There are two means of B<Connect>ing to
+a database with B<EZDBI>. The first is as follows.
 
   Connect 'type:database', ...;
 
-The C<type> is the kind of database you are using.  Typical values are
-C<mysql>, C<Oracle>, C<Sybase>, C<Pg> (for PostgreSQL), C<Informix>,
-C<DB2>, and C<CSV> (for text files).  C<database> is the name of the
-database.  For example, if you want to connect to a MySQL database
-named 'accounts', use C<mysql:accounts>.
+The C<type> is the kind of database you are using eg;
+C<mysql>, C<Oracle>, C<Pg> (for PostgreSQL), C<CSV> (for text files).
+C<database> is the name of the database. For example, if you want to connect
+to a MySQL database named 'accounts', use C<mysql:accounts>.
 
-Any additional arguments here will be passed directly to the database.
-This part is hard to document because every database is a little
-different.  Typically, you supply a username and a password here if
-the database requires them.  Consult the documentation for the
-B<DBD::> module for your database for more information.
+Any additional arguments will be passed directly to the database. This is
+difficult to document because every database is a little different. Typically,
+you supply a username and a password here if the database requires them.
+Consult the documentation of your B<DBD> for more information.
 
-  # For MySQL
-  Connect 'mysql:databasename', 'username', 'password';
-  
-  # For Postgres
-  Connect 'Pg:databasename', 'username', 'password';
-  
-  # Please send me sample calls for other databases
+The second way to connect to a database is especially useful if you maintain
+many scripts that use the same connection information, it allows you store
+your connection parameters in an B<AppConfig> (Windows INI) format file,
+which is compatible with B<DBIx::Connect>.
 
-To use the second you put the following line in your program:
-
-    Connect {label=>'section', database=>'db', ini=>'file', attr=>{ ... }};
-
-This form is especially useful if you maintain many scripts that
-use the same connection information, it allows you store your connection
-parameters in an B<AppConfig> (Windows INI) format file, which is compatible
-with B<DBIx::Connect>. Here is an example resource file.
-
-  [section]
-  user     = Bob
-  pass     = Smith
-  dsn      = dbi:mysql:?
-  attr Foo = Bar
+    Connect {
+             label=>'section',
+             database=>'db',
+             ini=>'file',
+             attr=>{ ... }
+            };
 
 =over
 
@@ -343,7 +359,19 @@ See L<"ENVIRONMENT"> and L<"FILES">.
 =item I<attr>
 
 Optional. Equivalent to \%attr in L<DBI>. I<attr> supplied to C<Connect>
-take precedence over these set in the resource file.
+take precedence over those set in the resource file.
+
+=back
+
+Here is an example resource file.
+
+  [section]
+  user     = Bob
+  pass     = Smith
+  dsn      = dbi:mysql:?
+  attr Foo = Bar
+
+=over
 
 =item I<user>
 
@@ -358,101 +386,65 @@ Required. The password to connect with, be sure to protect you resource file.
 Required. The C<dbi:> is optional, though it is required for a
 B<DBIx::Connect> compatibile resource file.
 
+=item I<attr> attribute
+
+Optional. Equivalent to \%attr in L<DBI>. I<attr> supplied to C<Connect>
+take precedence over those set in the resource file.
+
 =back
+
+=head2 C<Delete>
+
+C<Delete> removes records from the database.
+
+  Delete "From ACCOUNTS Where id=?", $old_customer_id;
+
+In a numeric context, C<Delete> returns the number of records
+deleted. In boolean context, C<Delete> returns a success or failure
+code. Deleting zero records is considered to be success.
+
+=head2 C<Insert>
+
+C<Insert> inserts new records into the database.
+While you may explicitly include each parameter, it is inconvenient.
+
+  Insert "Into ACCOUNTS (id, firstname, lastname, age, occupation, balance) Values(?, ?, ?, ?, ?, ?)",
+            undef, "Michael", "Schwern",  26, "Slacker", 0.00;
+
+C<Insert> allows the use of C<??L> as an abbreviation for the appropriate
+list of placeholders.
+
+  Insert "Into ACCOUNTS (id, firstname, lastname, age, occupation, balance) Values ??L",
+            undef, "Michael", "Schwern",  26, "Slacker", 0.00;
+
+If the C<??L> is the last thing in the SQL statement, you may omit it
+as well as the word C<'Values'>.
+
+  Insert "Into ACCOUNTS (id, firstname, lastname, age, occupation, balance)",
+            undef, "Michael", "Schwern",  26, "Slacker", 0.00;
+
+Another convenient option for C<Insert> you might use if your new record
+data is already in a hash is to pass in a hash reference.
+
+  Insert "Into ACCOUNTS",
+            {
+             id=>undef,             age=>26,
+             firstname=>"Michael",  lastname=>"Schwern",
+             occupation=>"Slacker", balance=>0.00
+            };
+
+The return value is the same as for C<Delete>.
 
 =head2 C<Select>
 
-C<Select> queries the database and retrieves the records that you ask
-for.  It returns a list of matching records.
-
-  @records = Select 'lastname From ACCOUNTS Where balance < 0';
-
-C<@records> now contains a list of the last names of every customer
-with an overdrawn account.
-
-  @Tims = Select "lastname From ACCOUNTS Where firstname = 'Tim'";
-
-C<@Tims> now contains a list of the last names of every customer
-whose first name is C<Tim>.
-
-You can use this in a loop:
-
-  for $name (Select "lastname From ACCOUNTS Where firstname = 'Tim'") {
-    print "Tim $name\n";
-  }
-
-It prints out C<Tim Cox>, C<Tim O'Reilly>, C<Tim Bunce>, C<Tim Allen>.
-
-This next example prompts the user for a last name, then  prints out
-all the people with that last name.  But it has a bug:
-
-  while (1) {
-    print "Enter last name: ";
-    chomp($lastname = <>);
-    last unless $lastname;
-  
-    print "People named $lastname:\n"
-  
-    for (Select "firstname From ACCOUNTS Where lastname='$lastname'") {
-      print "$_ $lastname\n";
-    }
-  }
-
-The bug is that if the user enters C<"O'Reilly">, the SQL statement
-will have a syntax error, because the apostrophe in C<O'Reilly> will
-confuse the database.
-
-Sometimes people go to a lot of work to try to fix this.  B<EZDBI>
-will fix it for you automatically.  Instead of the code above, you
-should use this:
-
-  for (Select "firstname From ACCOUNTS Where lastname=?", $lastname) {
-    print "$_ $lastname\n";
-  }
-
-The C<?> will be replaced with the value of C<$lastname> avoiding
-such potential embedded quoting problems.  Use C<?> wherever
-you want to insert a value.  Doing this may also be much more
-efficient than inserting the variables into the SQL yourself.
-
-The C<?>s in the SQL code are called I<placeholders>.
-The Perl value C<undef> is converted to the SQL C<NULL> value by
-placeholders:
-
-  for (Select "* From ACCOUNTS Where occupation=?", undef) {
-    # selects records where occupation is NULL
-  }
-
-You can, of course, use
-
-  for (Select "* From ACCOUNTS Where occupation Is NULL") {
-    # selects records where occupation is NULL
-  }
-
-If you simply require the number of rows selected do the following:
-
-  if ((Select "Count(*) From ACCOUNTS Where balance < 0")[0]) {
-    print "Someone is overdrawn.\n";
-  } else {
-    print "Nobody is overdrawn.\n";
-  }
-
-That is, use the SQL C<Count> function, and retrieve the appropriate
-element of the returned list. I<This behavior has changed since 0.07>,
-where you would simply C<Select> in scalar context.  
-
-=cut
-
-XXX kill this eventually --^ & moving to CAVEATS? or just nix mention of prior
-
-=pod
-
-In list context, C<Select> returns a list of selected records.  If the
+C<Select> queries the database and retrieves the records that you ask for.
+In list context, C<Select> returns a list of selected records. If the
 selection includes only one field, you will get back a list of field
 values:
 
   # print out all last names
-  for $lastname (Select "lastname From ACCOUNTS") {
+  @lastname = Select "lastname From ACCOUNTS";
+  for $lastname (@lastname) {
     print "$lastname\n";
   }
   # Select returned ("Smith", "Jones", "O'Reilly", ...)
@@ -466,28 +458,24 @@ list of rows; each row will be an array of values:
   }
   # Select returned (["Will", "Smith"], ["Tom", "Jones"],
   #                       ["Tim", "O'Reilly"], ...)
-  
-  # print out everything
-  for $row (Select "* From ACCOUNTS") {
-    print "@$row\n";
+
+If you simply require the number of rows selected do the following:
+
+  if ((Select "Count(*) From ACCOUNTS Where balance < 0")[0]) {
+    print "Someone is overdrawn.\n";
+  } else {
+    print "Nobody is overdrawn.\n";
   }
-  # Select returned ([143, "Will", "Smith", 36, "Actor", 142395.37],
-  #                  [229, "Tom", "Jones", 52, "Singer", -1834.00],
-  #                  [119, "Tim", "O'Reilly", 48, "Publishing Magnate",
-  #                    -550.00], ...)
 
-=head2 C<Delete>
+That is, use the SQL C<Count> function, and retrieve the appropriate
+element of the returned list. I<This behavior has changed since 0.07>,
+where you would simply C<Select> in scalar context.
 
-C<Delete> removes records from the database.
+=cut
 
-  Delete "From ACCOUNTS Where id=?", $old_customer_id;
+XXX kill this eventually --^ & moving to CAVEATS? or just nix mention of prior
 
-You can (and should) use C<?> placeholders with C<Delete> when they
-are appropriate.
-
-In a numeric context, C<Delete> returns the number of records
-deleted.  In boolean context, C<Delete> returns a success or failure
-code.  Deleting zero records is considered to be success.
+=pod
 
 =head2 C<Update>
 
@@ -496,27 +484,18 @@ C<Update> modifies records that are already in the database.
   Update "ACCOUNTS Set balance=balance+? Where id=?",
             $deposit, $old_customer_id;
 
+A convenient option for C<Update> you might use if your
+new record data is already in a hash is to pass in a hash reference.
 
-The return value is the same as for C<Delete>.
+  Update "ACCOUNTS SET",
+           {balance=>$balance},
+           "Where id=?", $old_customer_id;
 
-=head2 C<Insert>
+If the C<SET> is the last thing in the first clause of the SQL statement,
+you may omit it.
 
-C<Insert> inserts new records into the database.
-
-  Insert "Into ACCOUNTS Values (?, ?, ?, ?, ?, ?)",
-            undef, "Michael", "Schwern",  26, "Slacker", 0.00;
-
-Writing so many C<?>'s is inconvenient.  For C<Insert>, you may use
-C<??L> as an abbreviation for the appropriate list of placeholders:
-
-  Insert "Into ACCOUNTS Values ??L",
-            undef, "Michael", "Schwern",  26, "Slacker", 0.00;
-
-If the C<??L> is the last thing in the SQL statement, you may omit it.
-You may also omit the word C<'Values'>:
-
-  Insert "Into ACCOUNTS",
-            undef, "Michael", "Schwern",  26, "Slacker", 0.00;
+The second clause of the SQL statement, C<"Where id=?"> in the example above,
+is optional.
 
 The return value is the same as for C<Delete>.
 
@@ -588,13 +567,13 @@ by B<EZDBI> such as C<Grant>.
 
   Sql('Drop FOO');
 
-NOTE: Sql does not expect a result set, as C<DBI::do()> does not, as such
-commands such as MySQL's Describe are not especially useful.
+NOTE: Sql does not return, as it calls C<DBI::do()>.
+As such C<Sql> is not especially useful for commands like MySQL's I<Describe>.
 
 =head2 C<Use>
 
 C<Use> provides the ability to manage multiple simultaneous connections.
-It might be compared to B<perl>'s 2-arg C<select> where C<Select> would be
+It might be compared to B<perl>'s 1-arg C<select> where C<Select> would be
 B<perl>'s C<readline>.
 
   my $dbha = Connect ...;
@@ -617,20 +596,22 @@ machines need to be maintained.
 =head1 ERRORS
 
 If there's an error, B<EZDBI> prints a (hopefully explanatory) message
-and throws an exception.  You can catch the exception with C<eval { ... }>  or let it kill your program.
+and throws an exception. You can catch the exception with C<eval { ... }>,
+or let it kill your program.
 
 =head1 ENVIRONMENT
 
 =over
 
-=item DBIX_CONN
+=item I<DBIX_CONN>
 
-If C<Connect> is called in the B<AppConfig> format but is not provided
-I<ini> it will try the file specified by DBIX_CONN.
+If C<Connect> is called in the B<AppConfig> format but I<ini> is not provided
+it will try the file specified by I<DBIX_CONN>.
 
-=item HOME
+=item I<HOME>
 
-If DBIX_CONN is not set C<Connect> will try the file F<.appconfig-dbi> in HOME.
+If I<DBIX_CONN> is not set C<Connect> will try the file F<.appconfig-dbi> in
+I<HOME>.
 
 =back
 
@@ -638,7 +619,7 @@ If DBIX_CONN is not set C<Connect> will try the file F<.appconfig-dbi> in HOME.
 
 =over
 
-=item ~/.appconfig-dbi
+=item F<~/.appconfig-dbi>
 
 The last fall back for B<AppConfig> style Connect as documented in
 L<"ENVIRONMENT">.
@@ -700,7 +681,7 @@ Gavin Estey
   
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
   GNU General Public License for more details.
   
   You should have received a copy of the GNU General Public License

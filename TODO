@@ -1,0 +1,4 @@
+0.120
+	Should Select list context behavior be fetchall_hashref?
+	It is arguably more intuitive or 'EZ', array is still
+	available in fetchrow
