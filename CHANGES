@@ -1,3 +1,9 @@
+0.11	Thu Jun 13 04:05:40 UTC 2002
+
+	Some documentation clarifications.
+
+	Fixed a bug that slides through in 5.6+ but breaks in earlier versions.
+
 0.1	Thu May  2 02:32:38 UTC 2002
 
 	Renamed and documented the previously undocumented DBCommand.

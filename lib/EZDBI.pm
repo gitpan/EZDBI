@@ -241,7 +241,7 @@ sub _substitute {
 
   # remove it from the MRU queue (if it is there)
   # and add it to the end
-  $sth_cacheA->{$DBH} = [grep({$_ ne $str} @{$sth_cacheA->{$DBH}}), $str];
+  $sth_cacheA->{$DBH} = [grep($_ ne $str, @{$sth_cacheA->{$DBH}}), $str];
 
   return $sth;
 }
@@ -253,7 +253,7 @@ __END__
 
 =head1 NAME
 
-EZDBI - Easy interface to SQL database
+EZDBI - EZ (Easy) interface to SQL databases (DBI)
 
 =head1 SYNOPSIS
 
@@ -410,13 +410,12 @@ should use this:
     print "$_ $lastname\n";
   }
 
-B<EZDBI> will replace the C<?> with the value of C<$lastname>.  If
-C<$lastname> contains an apostrophe or something else that would mess
-up the SQL, B<EZDBI> will take care of it for you.  Use C<?> wherever
+The C<?> will be replaced with the value of C<$lastname> avoiding
+such potential embedded quoting problems.  Use C<?> wherever
 you want to insert a value.  Doing this may also be much more
 efficient than inserting the variables into the SQL yourself.
 
-The C<?>es in the SQL code are called I<placeholders>.
+The C<?>s in the SQL code are called I<placeholders>.
 The Perl value C<undef> is converted to the SQL C<NULL> value by
 placeholders:
 
@@ -484,7 +483,7 @@ C<Delete> removes records from the database.
   Delete "From ACCOUNTS Where id=?", $old_customer_id;
 
 You can (and should) use C<?> placeholders with C<Delete> when they
-are approprite.
+are appropriate.
 
 In a numeric context, C<Delete> returns the number of records
 deleted.  In boolean context, C<Delete> returns a success or failure
@@ -600,9 +599,20 @@ B<perl>'s C<readline>.
 
   my $dbha = Connect ...;
   my $dbhb = Connect ...;
-  Select('foo From BAR');
+  Select('plugh From FOO');
   Use($dbha);
-  Select('baz From QUUX');
+  Select('xyzzy From BAR');
+
+You might do this if you had C<Connecte>ed to both FOO and BAR on the
+same host. This is perfectly acceptable, but rather wasteful. SQL syntax
+allows you to do this more efficiently.
+
+  Connect ...;
+  Select('plugh From FOO.BARFLE');
+  Select('xyzzy From BAR.ZAZ');
+
+Rather this is most appropriate when connections to databases on seperate
+machines need to be maintained.
 
 =head1 ERRORS
 
@@ -673,7 +683,9 @@ Thanks to the following people for their advice, suggestions, and support:
 
 Terence Brannon /
 Meng Wong /
-Ray Brizner
+Juerd /
+Ray Brizner /
+Gavin Estey
 
 =head1 COPYRIGHT
 
