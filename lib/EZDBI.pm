@@ -4,8 +4,12 @@ use DBI;
 use strict;
 use Carp;
 use vars '$E', '@EXPORT', '$VERSION';
+#XXX I think we might need to restrict the version, for the regexps,
+#XXX or I might have confused stuff with modules I previously used to implement
+#XXX This functionality?
+#XXX require 5.x;
 
-$VERSION = '0.06';
+$VERSION = '0.07';
 
 # Note that this package does NOT inherit from Exporter
 @EXPORT = qw(Insert Select Update Delete DBcommand);
@@ -39,14 +43,58 @@ sub import {
 
 sub Connect {
   my ($type, @args) = @_;
-
+  if( ref($type) eq 'HASH' ){
+    my $cfg = _parseIni(-file=>
+			$type->{ini}||
+			$ENV{'DBIX_CONN'}||
+			$ENV{HOME}.'/.appconfig-dbi',
+			-label=>$type->{label});
+    @args = (
+	     $cfg->{user},
+	     $cfg->{pass},
+	     $type->{attr}
+	    );
+    $cfg->{dsn} =~ s/^dbi://i;
+    if( $cfg->{dsn} =~ /\?$/ ){
+      die("Section '$type->{label}' requires a database name") unless
+	exists($type->{database});
+      $cfg->{dsn} =~ s/\?$/$type->{database}/;
+    }
+    $type = $cfg->{dsn};
+  }
   if ($type =~ /^Pg:(.*)/ && $1 !~ /dbname=/) {
     $type = "Pg:dbname=$1";
   }
-
   unless ($DBH = DBI->connect("DBI:$type", @args)) {
     croak "Couldn't connect to database: $E";
   }
+}
+
+sub _parseIni{
+  my %parm = @_;
+  my $self;
+  open(my $INI, $parm{'-file'}) || die("$!: $parm{-file}");
+  while( <$INI> ){
+    next if /^\s*$|(?:[\#\;])/;
+    if( /^\s*\[$parm{'-label'}\]/ ..
+	(/^\s*\[(?!$parm{'-label'})/ || eof($INI) ) ){
+      /^\s*([^=]+?)\s*=\s*(.*)$/;
+      $self->{$1} = $2 if $1;
+    }
+  }
+  #Handle DBIx::Connect attr construct
+  foreach my $key ( grep {/^attr/} keys %{$self} ){
+    my $attr = $key;
+    $attr =~ s/^attr\s+//i;
+    #XXX Unfortunately delete does not reliably return the value?
+    #XXX $self->{attr}->{$attr} = delete($self->{$key});
+    $self->{attr}->{$attr} = $self->{$key};
+    delete($self->{$key});
+  }
+
+  die("Section [$parm{'-label'}] does not exist in $parm{'-file'}") unless
+    keys %{$self};
+  return $self;
 }
 
 
@@ -141,7 +189,7 @@ sub _substitute {
         unless ($str =~ /\)\s*$/) {
           $str .= "($list)";
         }
-      } else {
+      } elsif(@args){
         $str .= " values ($list)";
       }
     }
@@ -188,6 +236,9 @@ sub _substitute {
 }
 
 1;
+__END__
+
+=pod
 
 =head1 NAME
 
@@ -195,18 +246,24 @@ EZDBI - Easy interface to SQL database
 
 =head1 SYNOPSIS
 
-  use EZDBI 'type:database', @arguments;
+  use EZDBI @ConnectOptions;
+  #OR
+  use EZDBI;
+  #AND
+  Connect   'type:database', 'username', 'password', ...;  
+  #OR
+  Connect   {label=>'section', ...};
 
-  Insert 'into TABLE values', ...;
-  Delete 'from TABLE where field=?, field=?', ...;
-  Update 'TABLE set field=?, field=?', ...;
+  Insert    'Into TABLE Values', ...;
+  Delete    'From TABLE Where field=?, field=?', ...;
+  Update    'TABLE set field=?, field=?', ...;
 
-  @rows   = Select 'field, field from TABLE where field=?, field=?', ...;
-  $n_rows = Select 'field, field from TABLE where field=?, field=?', ...;
+  @rows   = Select 'field, field From TABLE Where field=?, field=?', ...;
+  $n_rows = Select 'field, field From TABLE Where field=?, field=?', ...;
 
 =head1 DESCRIPTION
 
-This file documents version 0.06 of C<EZDBI>.
+This file documents version 0.08 of C<EZDBI>.
 
 C<EZDBI> provides a simple and convenient interface to most common SQL
 databases.  It requires that you have installed the C<DBI> module and
@@ -254,24 +311,46 @@ and later, when your program is ready to connect, call
 
 	Connect 'type:database', ...;
 
+or optionally
+
+	Connect {label=>'section', database=>'db', ini=>'file', attr=>{ ... }};
+
+This latter form is especially useful if you maintain many scripts that
+use the same connection information, it allows you store your connection
+parameters in an AppConfig (Windows INI) format file, which is compatible
+with C<DBIx::Connect>.
+
+        [section]
+        user     = Bob
+        pass     = Smith
+        #NOTE: The dsn is not required to begin with 'dbi:', it's optional
+        dsn      = mysql:?
+        attr Foo = Bar
+
+I<label> is required and indicates which section of the INI file contains the
+pertinent connection information. I<database> is optional, if supplied it will
+replace the special value I<?> at the end of the dsn. I<attr> is optional and
+equivalent to \%attr in C<DBI>. I<ini> is optional and specifies the INI file
+to read connection information from. See L<"ENVIRONMENT"> and L<"FILES">.
+
 =head2 C<Select>
 
 C<Select> queries the database and retrieves the records that you ask
 for.  It returns a list of matching records.  
 
-        @records = Select 'lastname from accounts where balance < 0';
+        @records = Select 'lastname From ACCOUNTS Where balance < 0';
 
 C<@records> now contains a list of the last names of every customer
 with an overdrawn account.
 
-        @Tims = Select "lastname from accounts where firstname = 'Tim'";
+        @Tims = Select "lastname From ACCOUNTS Where firstname = 'Tim'";
 
 C<@Tims> now contains a list of the last names of every customer
 whose first name is C<Tim>.
 
 You can use this in a loop:
 
-        for $name (Select "lastname from accounts where firstname = 'Tim'") {
+        for $name (Select "lastname From ACCOUNTS Where firstname = 'Tim'") {
           print "Tim $name\n";
         }
 
@@ -287,7 +366,7 @@ all the people with that last name.  But it has a bug:
 
           print "People named $lastname:\n"
 
-          for (Select "firstname from accounts where lastname='$lastname'") {
+          for (Select "firstname From ACCOUNTS Where lastname='$lastname'") {
             print "$_ $lastname\n";
           }
         }
@@ -300,7 +379,7 @@ Sometimes people go to a lot of work to try to fix this.  C<EZDBI>
 will fix it for you automatically.  Instead of the code above, you
 should use this:
 
-          for (Select "firstname from accounts where lastname=?", $lastname) {
+          for (Select "firstname From ACCOUNTS Where lastname=?", $lastname) {
             print "$_ $lastname\n";
           }
 
@@ -314,20 +393,20 @@ The C<?>es in the SQL code are called I<placeholders>.
 The Perl value C<undef> is converted to the SQL C<NULL> value by
 placeholders:
 
-        for (Select "* from accounts where occupation=?", undef) {
+        for (Select "* From ACCOUNTS Where occupation=?", undef) {
           # selects records where occupation is NULL
         }
 
 You can, of course, use
 
-        for (Select "* from accounts where occupation is NULL") {
+        for (Select "* From ACCOUNTS Where occupation Is NULL") {
           # selects records where occupation is NULL
         }
 
 In scalar context, C<Select> returns the number of rows selected.
 This means you can say
 
-        if (Select "* from accounts where balance < 0") {
+        if (Select "* From ACCOUNTS Where balance < 0") {
           print "Someone is overdrawn.\n";
         } else {
           print "Nobody is overdrawn.\n";
@@ -338,7 +417,7 @@ selection includes only one field, you will get back a list of field
 values:
 
         # print out all last names
-        for $lastname (Select "lastname from accounts") {       
+        for $lastname (Select "lastname From ACCOUNTS") {       
           print "$lastname\n";
         }
         # Select returned ("Smith", "Jones", "O'Reilly", ...)
@@ -347,14 +426,14 @@ If the selection includes more than one field, you will get back a
 list of rows; each row will be an array of values:
 
         # print out all full names
-        for $name (Select "firstname, lastname from accounts") {       
+        for $name (Select "firstname, lastname From ACCOUNTS") {       
           print "$name->[1], $name->[0]\n";
         }
         # Select returned (["Will", "Smith"], ["Tom", "Jones"],
         #                       ["Tim", "O'Reilly"], ...)
 
         # print out everything
-        for $row (Select "* from accounts") {       
+        for $row (Select "* From ACCOUNTS") {       
           print "@$row\n";
         }
         # Select returned ([143, "Will", "Smith", 36, "Actor", 142395.37], 
@@ -366,7 +445,7 @@ list of rows; each row will be an array of values:
 
 C<Delete> removes records from the database.
 
-        Delete "from accounts where id=?", $old_customer_id;
+        Delete "From ACCOUNTS Where id=?", $old_customer_id;
 
 You can (and should) use C<?> placeholders with C<Delete> when they
 are approprite.
@@ -379,7 +458,7 @@ code.  Deleting zero records is considered to be success.
 
 C<Update> modifies records that are already in the database.
 
-        Update "accounts set balance=balance+? where id=?", 
+        Update "ACCOUNTS Set balance=balance+? Where id=?", 
                   $deposit, $old_customer_id;
 
 
@@ -389,43 +468,99 @@ The return value is the same as for C<Delete>.
 
 C<Insert> inserts new records into the database.
 
-        Insert "into accounts values (?, ?, ?, ?, ?, ?)", 
+        Insert "Into ACCOUNTS Values (?, ?, ?, ?, ?, ?)", 
                   undef, "Michael", "Schwern",  26, "Slacker", 0.00;
 
 Writing so many C<?>'s is inconvenient.  For C<Insert>, you may use
 C<??L> as an abbreviation for the appropriate list of placeholders:
 
-        Insert "into accounts values ??L",
+        Insert "Into ACCOUNTS Values ??L",
                   undef, "Michael", "Schwern",  26, "Slacker", 0.00;
 
 If the C<??L> is the last thing in the SQL statement, you may omit it.
-You may also omit the word C<'values'>:
+You may also omit the word C<'Values'>:
 
-        Insert "into accounts",
+        Insert "Into ACCOUNTS",
                   undef, "Michael", "Schwern",  26, "Slacker", 0.00;
 
 The return value is the same as for C<Delete>.
 
-=head2 Error Handling
+=head1 ERRORS
 
 If there's an error, C<EZDBI> prints a (hopefully explanatory) message
 and throws an exception.  You can catch the exception with C<eval { ... }>  or let it kill your program.
 
+=head1 ENVIRONMENT
 
-=head2 Other Features
+=over
+
+=item DBIX_CONN
+
+If C<Connect> is not called in the C<AppConfig> format but is not provided
+I<ini> it will try the file specified by DBIX_CONN.
+
+=item HOME
+
+If DBIX_CONN is not set C<Connect> will try the file .appconfig-dbi in HOME.
+
+=back
+
+=head1 FILES
+
+=over
+
+=item ~/.appconfig-dbi
+
+The last fall back for C<AppConfig> style Connect as documented in
+L<"ENVIRONMENET">.
+
+=back
+
+See L<"ENVIRONMENT">.
+
+=head1 CAVEATS
+
+=over
+
+=item Other Features
 
 Any other features in this module should be construed as undocumented
-and unsupported and may go away in a future release.
+and unsupported and may go away in a future release. Inquire within.
+
+=cut
+
+#XXX Large result set?!
+
+=pod
+
+=back
 
 =head1 BUGS
 
-This is ALPHA software.  There may be bugs.  The interface may change.
+This is ALPHA software. 
+There may be bugs.
+The interface may change.
 Do not use this for anything important.
 
-Notice that this module has NO TEST SUITE.
-What does that mean to you?
+Notice that this module has NO TEST SUITE. What does that mean to you?
 
-=head1 THANKS
+=head1 AUTHOR
+
+=over
+
+=item 0.07-present
+
+ Jerrad Pierce <jpierce@cpan.org>, <webmaster@pthbb.org>
+
+=item 0.01-0.06
+
+ Mark Jason Dominus
+ mjd-perl-ezdbi+@plover.com
+ http://perl.plover.com/EZDBI/
+
+=over
+
+=item THANKS
 
 Thanks to the following people for their advice, suggestions, and
 support:
@@ -434,16 +569,9 @@ Terence Brannon /
 Jerrad Pierce /
 Meng Wong
 
+=back
 
-=head1 SUPPORT
-
-Send mail to C<mjd-perl-ezdbi+@plover.com> and I will do what I can.
-
-=head1 AUTHOR
-
-	Mark Jason Dominus
-	mjd-perl-ezdbi+@plover.com
-	http://perl.plover.com/EZDBI/
+=back
 
 =head1 COPYRIGHT
 
@@ -469,8 +597,6 @@ with this module.
 
 =head1 SEE ALSO
 
-perl(1), L<DBI>.
+perl(1), L<DBI>, L<DBIx::Connect>.
 
 =cut
-
-
