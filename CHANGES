@@ -1,3 +1,11 @@
+0.121	Sun Mar  9 01:25:08 UTC 2003
+
+	Reworked DESCRIPTION in documentation.
+
+	Fixed Insert support for subqueries.
+
+	Fixed Update hashref form.
+
 0.120	Sat Mar  8 03:53:41 UTC 2003
 
 	Added new convenience forms of Insert and Update,

@@ -9,7 +9,7 @@ my $DBH;
 *E = \$DBI::errstr;
 my $sth_cache;   # string to statement handle cache
 my $sth_cacheA;  # oldest first (LRU)  handle order
-$VERSION = 0.120;
+$VERSION = 0.121;
 
 # Note that this package does NOT inherit from Exporter
 @EXPORT = qw(Connect Delete Disconnect Insert Select Sql Update Use);
@@ -120,6 +120,7 @@ sub Select {
   my $r;
   if( wantarray ){
     $r = $sth->fetchall_arrayref;
+    #XXX * on a single column Table? check length of first row?
     unless( $columns =~ /^\*/ || $columns =~ /,/ ){
       $_ = $_->[0] foreach @{$r};
     }
@@ -167,7 +168,7 @@ sub Update {
     }
     $str .= ' ' . join(', ', map{"$_=?"}@cols) .
       (defined($args[1]) ? shift @args : '');
-    @args = @hash{@cols}, @args;
+    @args = (@hash{@cols}, @args);
   }
 
   my $sth = _substitute('Update', $str, scalar @args);
@@ -215,11 +216,14 @@ sub _substitute {
   my($function, $str, $args) = @_;
 
   if( $function eq 'Insert' ){
-    if( $str =~ s/\bValues\b\s*(?:\?\?L|\(\s*\?\?L\s*\))?\s*$//i ||
-	$str !~  /\bValues\b/i
-      ){
-      my $list = join(',', (('?') x $args));
-      $str .= " Values($list)";
+    my $list = join ',' , (('?') x $args);
+    unless( $str =~ s/\?\?L|\(\s*\?\?L\s*\)/($list)/ ){
+      if( $str =~ /\bvalues\b/i ){
+        $str .= "($list)" unless $str =~ /\)\s*$/;
+      }
+      elsif( $args ){
+        $str .= " values ($list)";
+      }
     }
   }
 
@@ -269,19 +273,19 @@ EZDBI - EZ (Easy) interface to SQL databases (DBI)
 
   use EZDBI;
 
-  Connect   {label=>'section', ...};
   Connect   'type:database', 'username', 'password', ...;
+  Connect   {label=>'section', ...};
 
   Delete    'From TABLE Where field=?, field=?', ...;
 
-  Insert    'Into TABLE Values', ...;
   Insert    'Into TABLE', \%values;
+  Insert    'Into TABLE Values', ...;
 
   @rows   =  Select 'field, field From TABLE Where field=?, ...;
   $n_rows = (Select 'Count(*)     From TABLE Where field=?, ...)[0];
 
-  Update    'TABLE Set field=?, field=?', ...;
   Update    'TABLE Set', \%values, ...;
+  Update    'TABLE Set field=?, field=?', ...;
 
 =head1 DESCRIPTION
 
@@ -307,20 +311,21 @@ Instead do
 Also note that the Perl value C<undef> is converted to the SQL C<NULL>
 value by placeholders:
 
-  Select "* From ACCOUNTS Where occupation=?", undef
+  Select '* From ACCOUNTS Where occupation=?', undef
   # selects records where occupation is NULL
 
 =head2 C<Connect>
 
 Creates a connection to the database. There are two means of B<Connect>ing to
-a database with B<EZDBI>. The first is as follows.
+a database with B<EZDBI>. The first is:
 
   Connect 'type:database', ...;
 
-The C<type> is the kind of database you are using eg;
+The C<type> is the B<DBD> you are using eg;
 C<mysql>, C<Oracle>, C<Pg> (for PostgreSQL), C<CSV> (for text files).
-C<database> is the name of the database. For example, if you want to connect
-to a MySQL database named 'accounts', use C<mysql:accounts>.
+C<database> is the name of the database.
+For example, if you want to connect to a MySQL database named 'accounts',
+use C<mysql:accounts>.
 
 Any additional arguments will be passed directly to the database. This is
 difficult to document because every database is a little different. Typically,
@@ -397,7 +402,7 @@ take precedence over those set in the resource file.
 
 C<Delete> removes records from the database.
 
-  Delete "From ACCOUNTS Where id=?", $old_customer_id;
+  Delete 'From ACCOUNTS Where id=?', $old_customer_id;
 
 In a numeric context, C<Delete> returns the number of records
 deleted. In boolean context, C<Delete> returns a success or failure
@@ -406,34 +411,37 @@ code. Deleting zero records is considered to be success.
 =head2 C<Insert>
 
 C<Insert> inserts new records into the database.
-While you may explicitly include each parameter, it is inconvenient.
+The return value is the same as for C<Delete>.
 
-  Insert "Into ACCOUNTS (id, firstname, lastname, age, occupation, balance) Values(?, ?, ?, ?, ?, ?)",
-            undef, "Michael", "Schwern",  26, "Slacker", 0.00;
-
-C<Insert> allows the use of C<??L> as an abbreviation for the appropriate
-list of placeholders.
-
-  Insert "Into ACCOUNTS (id, firstname, lastname, age, occupation, balance) Values ??L",
-            undef, "Michael", "Schwern",  26, "Slacker", 0.00;
-
-If the C<??L> is the last thing in the SQL statement, you may omit it
-as well as the word C<'Values'>.
-
-  Insert "Into ACCOUNTS (id, firstname, lastname, age, occupation, balance)",
-            undef, "Michael", "Schwern",  26, "Slacker", 0.00;
-
-Another convenient option for C<Insert> you might use if your new record
-data is already in a hash is to pass in a hash reference.
-
-  Insert "Into ACCOUNTS",
+  Insert 'Into ACCOUNTS',
             {
              id=>undef,             age=>26,
-             firstname=>"Michael",  lastname=>"Schwern",
-             occupation=>"Slacker", balance=>0.00
+             firstname=>'Michael',  lastname=>'Schwern',
+             occupation=>'Slacker', balance=>0.00
             };
 
-The return value is the same as for C<Delete>.
+Or equivalently:
+
+  Insert 'Into ACCOUNTS '.
+         '(id, firstname, lastname, age, occupation, balance) '.
+         'Values(?, ?, ?, ?, ?, ?)',
+         undef, 'Michael', 'Schwern', 26, 'Slacker', 0.00;
+
+While you may explicitly include each placeholder, it is inconvenient.
+C<Insert> allows the use of C<??L> as an abbreviation for the appropriate
+list of placeholders. And so we have the equivalent:
+
+  Insert 'Into ACCOUNTS '.
+         '(id, firstname, lastname, age, occupation, balance) '.
+         'Values ??L',
+         undef, 'Michael', 'Schwern', 26, 'Slacker', 0.00;
+
+If the C<??L> is the last thing in the SQL statement you may omit it,
+as well as the word C<'Values'>. And so we have the equivalent:
+
+  Insert 'Into ACCOUNTS '.
+         '(id, firstname, lastname, age, occupation, balance) ',
+         undef, 'Michael', 'Schwern', 26, 'Slacker', 0.00;
 
 =head2 C<Select>
 
@@ -443,25 +451,25 @@ selection includes only one field, you will get back a list of field
 values:
 
   # print out all last names
-  @lastname = Select "lastname From ACCOUNTS";
+  @lastname = Select 'lastname From ACCOUNTS';
   for $lastname (@lastname) {
     print "$lastname\n";
   }
-  # Select returned ("Smith", "Jones", "O'Reilly", ...)
+  # Select returned ('Smith', 'Jones', "O'Reilly", ...)
 
 If the selection includes more than one field, you will get back a
 list of rows; each row will be an array of values:
 
   # print out all full names
-  for $name (Select "firstname, lastname From ACCOUNTS") {
+  for $name (Select 'firstname, lastname From ACCOUNTS') {
     print "$name->[1], $name->[0]\n";
   }
-  # Select returned (["Will", "Smith"], ["Tom", "Jones"],
-  #                       ["Tim", "O'Reilly"], ...)
+  # Select returned (['Will', 'Smith'], ['Tom', 'Jones'],
+  #                       ['Tim', "O'Reilly"], ...)
 
 If you simply require the number of rows selected do the following:
 
-  if ((Select "Count(*) From ACCOUNTS Where balance < 0")[0]) {
+  if ((Select 'Count(*) From ACCOUNTS Where balance < 0')[0]) {
     print "Someone is overdrawn.\n";
   } else {
     print "Nobody is overdrawn.\n";
@@ -480,24 +488,22 @@ XXX kill this eventually --^ & moving to CAVEATS? or just nix mention of prior
 =head2 C<Update>
 
 C<Update> modifies records that are already in the database.
-
-  Update "ACCOUNTS Set balance=balance+? Where id=?",
-            $deposit, $old_customer_id;
-
-A convenient option for C<Update> you might use if your
-new record data is already in a hash is to pass in a hash reference.
-
-  Update "ACCOUNTS SET",
-           {balance=>$balance},
-           "Where id=?", $old_customer_id;
-
-If the C<SET> is the last thing in the first clause of the SQL statement,
-you may omit it.
-
-The second clause of the SQL statement, C<"Where id=?"> in the example above,
-is optional.
-
 The return value is the same as for C<Delete>.
+
+  Update 'ACCOUNTS Set', {balance=>$balance},
+         'Where id=?', $old_customer_id;
+
+Or equivalently:
+
+  Update 'ACCOUNTS Set balance=balance+? Where id=?',
+          $deposit, $old_customer_id;
+
+For the first form, if the C<Set> is the last thing in the first clause of
+the SQL statement, you may omit it. Likewise the second clause of the SQL
+statement, C<'Where id=?'> in the example above, is optional.
+And so Robin Hood might:
+
+  Update 'ACCOUNTS', {balance=>1_000_000};
 
 =head1 FMTYEWTK
 
@@ -526,13 +532,13 @@ not safe to assume in such a situtation that your connection is still
 intact. You may provide a database handle or default to the current handle.
 
   my $dbh = Connect ...;
-  ..;
+  ...;
   Disconnect($dbh);
   ...;
 
 =head2 C<Select>
 
-The normal manner of calling C<Select> returns the entire recordset,
+The normal manner of calling C<Select> returns the entire recordset at once,
 this may be hazardous to your health in the limit of large recordsets.
 C<Select> provides a mechanism for fetching individual records. In
 scalar context C<Select> returns an object that may be repeatedly
@@ -541,11 +547,11 @@ The object can return an arrayref or a hashref.
 
   my $r = Select('id, name From USERS');
   while( $_ = $r->([]) ){
-    printf "%i\n", $_->[0];   #First column of the record
+    printf "ID: %i\n", $_->[0];   #First column of the record
   }
   #OR
   while( $_ = $r->({}) ){
-    printf "%i\n", $_->{id};  #The record column named id
+    printf "ID: %i\n", $_->{id};  #The record column named id
   }
 
 If you plan on using any loop control (C<last> is the only sensible option)
@@ -567,7 +573,7 @@ by B<EZDBI> such as C<Grant>.
 
   Sql('Drop FOO');
 
-NOTE: Sql does not return, as it calls C<DBI::do()>.
+NOTE: Sql does not return a recirdest, as it is implemented with C<DBI::do()>.
 As such C<Sql> is not especially useful for commands like MySQL's I<Describe>.
 
 =head2 C<Use>
@@ -650,18 +656,19 @@ The interface may change.
 
 =head1 AUTHORS
 
- Mark Jason Dominus
- mjd-perl-ezdbi+@plover.com
- http://perl.plover.com/EZDBI/
-
  Jerrad Pierce
  jpierce@cpan.org OR webmaster@pthbb.org
  http://pthbb.org/software/perl/
+
+ Mark Jason Dominus
+ mjd-perl-ezdbi+@plover.com
+ http://perl.plover.com/EZDBI/
 
 =head2 THANKS
 
 Thanks to the following people for their advice, suggestions, and support:
 
+Coruscate /
 Terence Brannon /
 Meng Wong /
 Juerd /

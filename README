@@ -1,39 +1,14 @@
 
-----------------------------------------------------------------------
-
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 This is ALPHA software.  There may be bugs.  The interface may change.
-
-----------------------------------------------------------------------
-
-EZDBI provides an easy, simple interface to SQL databases from
-Perl.   Here's an example program written with EZDBI:
-
-        #!/usr/bin/perl
-
-        use EZDBI;
-
-	Connect 'mysql:test' => 'user', 'password';
-
-        Insert 'into names values', 'Harry', 'Potter';
-
-        if (Select q{* from names where first = 'Harry'} ) {
-          print "Potter is IN THE HOUSE.\n";
-        }
-
-        for (Select 'last from names') {
-          next if $seen{$_}++;
-          my @first = Select 'first from names where last = ?', $_;
-          print "$_: @first\n";
-        }
-
-        Delete q{from names where last='Potter'};
-
-        if (Select q{* from names where last = 'Potter'} ) {
-          die "Can't get rid of that damn Harry Potter!";
-        }
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Interface changes in this version:
+	
 
 
-You are not required to manage the DBI objects yourself, everything
-is done behind the scenes. Complex queries are possible. All you do
-is call the functions.  If you're retrieving data, it comes back as
-simple arrays.
+EZDBI provides an easy, simple interface to SQL databases from Perl.
+You are not required to manage the DBI objects yourself,  everything
+is done behind the scenes.  Complex queries are possible. All you do
+is call the functions.  If you're retrieving data,  it comes back as
+simple arrays. See the enclosed sample.pl an example program written
+with EZDBI.
